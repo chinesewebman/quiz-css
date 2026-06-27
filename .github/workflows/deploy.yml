@@ -1,0 +1,65 @@
+name: Deploy to Cloudflare Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: write
+
+concurrency:
+  group: pages-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ensure Pages project exists
+        env:
+          T: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          A: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set +e
+          RESP=$(curl -sS -X POST \
+            "https://api.cloudflare.com/client/v4/accounts/${A}/pages/projects" \
+            -H "Authorization: *** " \
+            -H "Content-Type: application/json" \
+            --data '{"name":"css","production_branch":"main"}' \
+            -w "\nHTTP_STATUS:%{http_code}")
+          STATUS=$(echo "$RESP" | grep -oE 'HTTP_STATUS:[0-9]+' | cut -d: -f2)
+          if [ "$STATUS" = "200" ] || [ "$STATUS" = "201" ]; then
+            echo "OK Pages project css created"
+          elif echo "$RESP" | grep -qi 'already exists\|\"code\":8000'; then
+            echo "INFO Pages project css already exists"
+          else
+            echo "WARN Project create returned $STATUS"
+            echo "$RESP"
+          fi
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/pages-action@v1
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          projectName: css
+          directory: .
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+          wranglerVersion: '3'
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          F="$GITHUB_STEP_SUMMARY"
+          echo "### Cloudflare Pages deploy done" >> "$F"
+          echo "" >> "$F"
+          echo "- Project: css" >> "$F"
+          echo "- Repo: chinesewebman/quiz-css" >> "$F"
+          echo "- Trigger: $GITHUB_EVENT_NAME ($GITHUB_REF)" >> "$F"
+          echo "- Commit: $GITHUB_SHA" >> "$F"
